@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Transaction Lifecycle Model</title>
+<meta name="description" content="The GraphWalker model behind payment-switch-mbt: states of a card transaction, the actions that move it, and every transition in plain English.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600&display=swap">
+<style>
+/* Layout: a spec sheet. Diagram first, the selected state's rules beside it, the full transition table below. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --ink: #1b2430;
+  --muted: #5b6674;
+  --line: #d5dae1;
+  --accent: #1f6feb;
+  --accent-soft: #e4eefd;
+  --ok: #1a7f4b;
+  --warn: #a8640a;
+  --bad: #b3261e;
+  --done: #5a4fcf;
+  --idle: #4b5563;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-head: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11161d; --surface: #181f28; --ink: #e6eaf0; --muted: #9aa5b3; --line: #2c3643;
+    --accent: #5b9cff; --accent-soft: #1b2b44; --ok: #4cc38a; --warn: #e0a24a; --bad: #f2867c; --done: #a59cff; --idle: #a3adba;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px); }
+body {
+  margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+}
+main { max-width: 1120px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: var(--font-head); font-weight: 600; line-height: 1.2; text-wrap: balance; margin: 0; }
+h1 { font-size: 30px; }
+h2 { font-size: 21px; }
+h3 { font-size: 16px; }
+p { margin: 0; max-width: 68ch; }
+a { color: var(--accent); }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.eyebrow a { color: inherit; }
+header { display: grid; gap: 10px; }
+header p { color: var(--muted); }
+
+.stage { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 880px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.diagram { padding: 12px; overflow-x: auto; }
+.diagram svg { display: block; width: 100%; min-width: 640px; height: auto; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 6px 2px; color: var(--muted); font-size: 13px; }
+
+svg text { font-family: var(--font-body); fill: var(--ink); }
+.arrow { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+.arrow-label { font-size: 13px; font-weight: 600; }
+.arrow-cond { font-size: 12px; fill: var(--muted); }
+.label-bg { fill: var(--bg); }
+.node { cursor: pointer; }
+.node rect.box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.node rect.stripe { stroke: none; }
+.node .title { font-family: var(--font-head); font-size: 17px; font-weight: 600; }
+.node .sub { font-size: 12px; fill: var(--muted); }
+.node:hover rect.box { stroke: var(--accent); }
+.node:focus { outline: none; }
+.node:focus-visible rect.box { stroke: var(--accent); stroke-width: 3; }
+.node.selected rect.box { stroke: var(--accent); stroke-width: 2.5; fill: var(--accent-soft); }
+
+.detail { padding: 18px 18px 20px; display: grid; gap: 16px; }
+.detail .check { background: var(--bg); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+.rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.rules li { display: grid; gap: 2px; padding-left: 12px; border-left: 3px solid var(--line); }
+.rules li.moves { border-left-color: var(--accent); }
+.rules .what { font-weight: 600; }
+.rules .when, .rules .then { font-size: 14px; color: var(--muted); }
+.rules .then b { color: var(--ink); font-weight: 500; }
+.chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 99px; border: 1px solid currentColor; vertical-align: 1px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.tabs button {
+  font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); cursor: pointer;
+}
+.tabs button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+section { display: grid; gap: 12px; }
+.vars { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0; }
+.vars div { padding: 12px 14px; }
+.vars dt { font-family: var(--font-mono); font-weight: 500; }
+.vars dd { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+.walk, .all { width: 100%; border-collapse: collapse; font-size: 14px; }
+.table-wrap { overflow-x: auto; }
+.walk th, .walk td, .all th, .all td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.walk th, .all th { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.walk td:first-child, .all td:first-child { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.all tr.group td { background: var(--bg); font-family: var(--font-head); font-weight: 600; font-size: 15px; color: var(--ink); padding-top: 12px; }
+.all td.same { color: var(--muted); }
+.source { color: var(--muted); font-size: 13px; }
+@media (prefers-reduced-motion: no-preference) { .node rect.box { transition: fill .15s, stroke .15s; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow"><a href="https://github.com/dobdaniel1/payment-switch-mbt">payment-switch-mbt</a> · GraphWalker model</div>
+    <h1>Transaction Lifecycle Model</h1>
+    <p>How the model-based tests think about a card transaction on the switch. Each box is a state the test checks; each arrow is an action it sends to the switch. GraphWalker picks the next arrow at random among those whose condition is true, so the same rules get exercised in thousands of orders.</p>
+  </header>
+
+  <div class="stage">
+    <div class="panel diagram">
+      <svg viewBox="0 0 990 540" role="img" aria-labelledby="dg-title">
+        <title id="dg-title">States of a transaction and the actions that move it between them</title>
+        <defs>
+          <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" style="fill: var(--muted)"></path>
+          </marker>
+        </defs>
+        <g id="arrows"></g>
+        <g id="nodes"></g>
+      </svg>
+      <div class="legend">
+        <span>Click a state to see everything that can happen there.</span>
+        <span>Not drawn: every state except Ready returns to Ready with <b>Next transaction</b>.</span>
+      </div>
+    </div>
+
+    <div class="panel detail" aria-live="polite">
+      <div class="tabs" id="tabs" role="group" aria-label="Choose a state"></div>
+      <div id="detail"></div>
+    </div>
+  </div>
+
+  <section>
+    <h2>The three things the model remembers</h2>
+    <dl class="vars">
+      <div class="panel"><dt>hostA</dt><dd>Status of host-a, the primary issuer for Visa: up, down or timeout.</dd></div>
+      <div class="panel"><dt>hostC</dt><dd>Status of host-c, the backup processor: up or down.</dd></div>
+      <div class="panel"><dt>approvedBy</dt><dd>Which host approved the transaction being followed. Reversals go back to that host.</dd></div>
+    </dl>
+    <p class="source">Conditions on the arrows are built only from these three. Everything else (every transaction's status, settlement totals) is tracked by the Java oracle and checked against the switch in every state.</p>
+  </section>
+
+  <section>
+    <h2>One walk, step by step</h2>
+    <p>A short stretch of a typical walk: approve, lose the host, reverse, bring it back.</p>
+    <div class="table-wrap panel">
+      <table class="walk">
+        <thead><tr><th>Step</th><th>GraphWalker takes</th><th>The test sends</th><th>Then checks</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Start</td><td>Reset the switch, set both hosts up</td><td>Ready: nothing on the switch</td></tr>
+          <tr><td>2</td><td>Purchase</td><td>Visa purchase, new STAN</td><td>Approved by host-a, response 00</td></tr>
+          <tr><td>3</td><td>Set host-a down</td><td>PATCH host-a down</td><td>Still Approved; host-a shows down</td></tr>
+          <tr><td>4</td><td>Reverse, approving host not up</td><td>Reversal request</td><td>Reversal pending on the switch</td></tr>
+          <tr><td>5</td><td>Set host-a up</td><td>PATCH host-a up</td><td>Still pending: nothing retried yet</td></tr>
+          <tr><td>6</td><td>Retry reversals, host back up</td><td>Retry queued reversals</td><td>Exactly this reversal delivered; Reversed</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Every transition</h2>
+    <p>All <span id="edge-count"></span> transitions in <a id="model-link"><code>TransactionLifecycle.json</code></a>, grouped by the state they start from. Several share a name: the condition decides which one applies.</p>
+    <div class="table-wrap panel">
+      <table class="all">
+        <thead><tr><th>ID</th><th>Action</th><th>Only when</th><th>Leads to</th><th>Model update</th></tr></thead>
+        <tbody id="all-rows"></tbody>
+      </table>
+    </div>
+    <p class="source">Generated from the model file on every push, so this page and the tests cannot disagree.</p>
+  </section>
+</main>
+
+<script>
+const MODEL = __MODEL_DATA__;
+const STATES = MODEL.states;
+const ACTION = MODEL.actions;
+const W = 190, H = 70;
+
+const svgNS = "http://www.w3.org/2000/svg";
+const el = (name, attrs = {}, text) => {
+  const n = document.createElementNS(svgNS, name);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
+// The six arrows that change state, placed by hand for legibility.
+const ARROWS = [
+  { d: "M230,250 L376,250", lx: 303, ly: 222, label: "Purchase or Refund", cond: "a host is up", anchor: "middle" },
+  { d: "M135,285 L135,411", lx: 147, ly: 340, label: "Insufficient funds (51)", cond: "or no host up (91)", anchor: "start" },
+  { d: "M570,232 L746,108", lx: 668, ly: 148, label: "Reverse", cond: "approving host up", anchor: "start" },
+  { d: "M570,268 L746,392", lx: 668, ly: 368, label: "Reverse", cond: "approving host not up", anchor: "start" },
+  { d: "M845,375 L845,129", lx: 857, ly: 245, label: "Retry reversals", cond: "host back up", anchor: "start" },
+  { d: "M475,285 L475,411", lx: 487, ly: 340, label: "Close batch", cond: "always", anchor: "start" },
+];
+
+function drawArrows() {
+  const g = document.getElementById("arrows");
+  for (const a of ARROWS) {
+    g.appendChild(el("path", { d: a.d, class: "arrow", "marker-end": "url(#head)" }));
+    g.append(
+      el("text", { x: a.lx, y: a.ly, class: "arrow-label", "text-anchor": a.anchor }, a.label),
+      el("text", { x: a.lx, y: a.ly + 16, class: "arrow-cond", "text-anchor": a.anchor }, a.cond));
+  }
+  // Paint a background behind each label so arrows never run through text.
+  requestAnimationFrame(() => {
+    g.querySelectorAll("text").forEach(t => {
+      try {
+        const b = t.getBBox();
+        g.insertBefore(el("rect", { x: b.x - 3, y: b.y - 1, width: b.width + 6, height: b.height + 2, class: "label-bg" }), g.firstChild);
+      } catch (e) { /* getBBox can fail while hidden; labels stay readable without it */ }
+    });
+  });
+}
+
+const edgesFrom = v => MODEL.edges.filter(e => e.from === v);
+const inPlace = v => edgesFrom(v).filter(e => e.to === v);
+
+function drawNodes() {
+  const g = document.getElementById("nodes");
+  for (const [id, s] of Object.entries(STATES)) {
+    const n = el("g", { class: "node", tabindex: "0", role: "button", "data-id": id, "aria-label": s.label + " state" });
+    n.appendChild(el("rect", { class: "box", x: s.x, y: s.y, width: W, height: H, rx: 9 }));
+    n.appendChild(el("rect", { class: "stripe", x: s.x, y: s.y + 10, width: 5, height: H - 20, rx: 2, style: `fill: var(${s.color})` }));
+    n.appendChild(el("text", { class: "title", x: s.x + 18, y: s.y + 30 }, s.label));
+    const loops = inPlace(id).length;
+    n.appendChild(el("text", { class: "sub", x: s.x + 18, y: s.y + 52 }, `${loops} action${loops === 1 ? "" : "s"} stay here`));
+    n.addEventListener("click", () => select(id));
+    n.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(id); } });
+    g.appendChild(n);
+  }
+}
+
+function drawTabs() {
+  const tabs = document.getElementById("tabs");
+  for (const [id, s] of Object.entries(STATES)) {
+    const b = document.createElement("button");
+    b.type = "button"; b.id = "tab-" + id; b.textContent = s.label; b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", () => select(id));
+    tabs.appendChild(b);
+  }
+}
+
+const capital = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+function ruleItem(e, v) {
+  const [name, does] = ACTION[e.name];
+  const li = document.createElement("li");
+  const moves = e.to !== v;
+  li.className = moves ? "moves" : "";
+  let then;
+  if (e.name === "e_Reverse" && !moves) then = MODEL.reverseInPlace[v];
+  else if (moves) then = `Moves to <b>${STATES[e.to].label}</b>. ${does}`;
+  else then = does || (e.effect ? capital(e.effect) + "." : "");
+  if (e.name === "e_CloseBatch" && !moves && v !== "v_Ready") then += " The followed transaction is not settled from here.";
+  li.innerHTML = `<span class="what">${name}</span>` +
+    (e.guard !== "always" ? `<span class="when">Only when ${e.guard}</span>` : "") +
+    `<span class="then">${then}</span>`;
+  return li;
+}
+
+function select(v) {
+  const s = STATES[v];
+  document.querySelectorAll(".node").forEach(n => n.classList.toggle("selected", n.dataset.id === v));
+  document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-pressed", String(b.id === "tab-" + v)));
+  const out = edgesFrom(v);
+  const d = document.getElementById("detail");
+  d.innerHTML = "";
+  const head = document.createElement("div");
+  head.innerHTML = `<h2>${s.label} <span class="chip" style="color: var(${s.color})">${s.status}</span></h2>`;
+  const check = document.createElement("div");
+  check.className = "check";
+  check.innerHTML = `<b>Checked on arrival:</b> ${s.check}`;
+  d.append(head, check);
+  for (const [title, list] of [["Moves to another state", out.filter(e => e.to !== v)], ["Stays in this state", out.filter(e => e.to === v)]]) {
+    if (!list.length) continue;
+    const h = document.createElement("h3");
+    h.textContent = `${title} (${list.length})`;
+    const ul = document.createElement("ul");
+    ul.className = "rules";
+    list.forEach(e => ul.appendChild(ruleItem(e, v)));
+    d.append(h, ul);
+  }
+  try { localStorage.setItem("mbt-state", v); } catch (e) { /* storage is optional */ }
+}
+
+function drawTable() {
+  document.getElementById("edge-count").textContent = MODEL.edges.length;
+  document.getElementById("model-link").href = MODEL.modelUrl;
+  const body = document.getElementById("all-rows");
+  for (const from of [null, ...Object.keys(STATES)]) {
+    const rows = MODEL.edges.filter(e => e.from === from);
+    if (!rows.length) continue;
+    const g = document.createElement("tr");
+    g.className = "group";
+    g.innerHTML = `<td colspan="5">${from ? "From " + STATES[from].label : "Start of every walk"}</td>`;
+    body.appendChild(g);
+    for (const e of rows) {
+      const tr = document.createElement("tr");
+      const same = e.to === from;
+      tr.innerHTML = `<td class="mono">${e.id}</td><td>${ACTION[e.name][0]} <span class="mono" style="color: var(--muted)">${e.name}</span></td>` +
+        `<td>${e.guard}</td><td class="${same ? "same" : ""}">${same ? "stays" : STATES[e.to].label}</td><td>${e.effect}</td>`;
+      body.appendChild(tr);
+    }
+  }
+}
+
+drawArrows();
+drawNodes();
+drawTabs();
+drawTable();
+let start = "v_Approved";
+try { const saved = localStorage.getItem("mbt-state"); if (saved && STATES[saved]) start = saved; } catch (e) { /* default view */ }
+select(start);
+</script>
+</body>
+</html>

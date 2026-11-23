@@ -1,0 +1,72 @@
+{
+  "states": {
+    "v_Ready": {
+      "label": "Ready", "x": 40, "y": 215, "color": "--idle", "status": "no transaction in progress",
+      "check": "Every transaction on the switch and both hosts match what the oracle expects."
+    },
+    "v_Approved": {
+      "label": "Approved", "x": 380, "y": 215, "color": "--ok", "status": "APPROVED, not settled",
+      "check": "The followed transaction is APPROVED and unsettled on the switch, and every other transaction and host still matches."
+    },
+    "v_Reversed": {
+      "label": "Reversed", "x": 750, "y": 55, "color": "--done", "status": "REVERSED",
+      "check": "The reversal reached the issuer: status REVERSED, and nothing else changed unexpectedly."
+    },
+    "v_ReversalPending": {
+      "label": "Reversal pending", "x": 750, "y": 375, "color": "--warn", "status": "REVERSAL_PENDING",
+      "check": "The reversal is queued for store and forward because its host was unreachable."
+    },
+    "v_Settled": {
+      "label": "Settled", "x": 380, "y": 415, "color": "--done", "status": "APPROVED, in a closed batch",
+      "check": "The transaction is in a closed batch and can no longer be reversed."
+    },
+    "v_Declined": {
+      "label": "Declined", "x": 40, "y": 415, "color": "--bad", "status": "DECLINED (51 or 91)",
+      "check": "The transaction is DECLINED with the expected response code and routing attempts."
+    }
+  },
+  "actions": {
+    "e_Start": ["Start", "Reset the switch and set both hosts up."],
+    "e_Purchase": ["Purchase", "Visa purchase with a new STAN. Expect 00 from host-a, or from host-c if host-a is down or timing out."],
+    "e_Refund": ["Refund", "Refund with a new STAN. Routed the same way as a purchase."],
+    "e_PurchaseInsufficientFunds": ["Purchase, insufficient funds", "Amount ending in 51. Expect decline 51 from whichever host answers."],
+    "e_PurchaseNoHost": ["Purchase, no host up", "Expect decline 91, with both failed attempts recorded."],
+    "e_Reverse": ["Reverse", "Reverse the followed transaction."],
+    "e_Resend": ["Resend", "Same terminal and STAN again. Expect the original transaction back with duplicate: true, never a new charge."],
+    "e_CloseBatch": ["Close batch", "Expect totals for exactly the approved, unsettled transactions, or 409 when there are none."],
+    "e_RetryReversals": ["Retry reversals", "Expect exactly the queued reversals whose host is up to be delivered."],
+    "e_NextTransaction": ["Next transaction", "Stop following this one. It stays on the switch and is still checked."],
+    "e_HostADown": ["Set host-a down", ""],
+    "e_HostATimeout": ["Set host-a timing out", ""],
+    "e_HostAUp": ["Set host-a up", ""],
+    "e_HostCDown": ["Set host-c down", ""],
+    "e_HostCUp": ["Set host-c up", ""]
+  },
+  "guards": {
+    "": "always",
+    "hostA == 'up' || hostC == 'up'": "host-a or host-c is up",
+    "!(hostA == 'up' || hostC == 'up')": "neither host is up",
+    "(approvedBy == 'host-a' && hostA == 'up') || (approvedBy == 'host-c' && hostC == 'up')": "the host that approved it is up",
+    "!((approvedBy == 'host-a' && hostA == 'up') || (approvedBy == 'host-c' && hostC == 'up'))": "the host that approved it is not up",
+    "hostA != 'down'": "host-a is not already down",
+    "hostA != 'timeout'": "host-a is not already timing out",
+    "hostA != 'up'": "host-a is not already up",
+    "hostC == 'up'": "host-c is up",
+    "hostC == 'down'": "host-c is down"
+  },
+  "effects": {
+    "approvedBy = hostA == 'up' ? 'host-a' : 'host-c';": "remember the approving host: host-a if up, otherwise host-c",
+    "hostA = 'down';": "host-a is now down",
+    "hostA = 'timeout';": "host-a is now timing out",
+    "hostA = 'up';": "host-a is now up",
+    "hostC = 'down';": "host-c is now down",
+    "hostC = 'up';": "host-c is now up",
+    "approvedBy = '';": "no approving host yet"
+  },
+  "reverseInPlace": {
+    "v_Reversed": "No change: repeating a reversal is safe.",
+    "v_ReversalPending": "No change: it stays queued until a retry.",
+    "v_Declined": "Refused with 409: only approved transactions can be reversed.",
+    "v_Settled": "Refused with 409: after settlement a refund is the right path."
+  }
+}
